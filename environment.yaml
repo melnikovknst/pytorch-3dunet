@@ -6,6 +6,7 @@ channels:
 dependencies:
   - python >=3.11
   - numpy
+  - matplotlib
   - nomkl
   - tensorboard
   - tqdm
@@ -14,9 +15,6 @@ dependencies:
   - scipy
   - scikit-image
   - pyyaml
-  - pytest
-  - ruff
   - pip
   - pip:
     - torch
-    - torchvision

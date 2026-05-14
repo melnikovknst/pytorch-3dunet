@@ -105,8 +105,11 @@ def copy_config(config: dict, config_path: str):
         subfolders = [f.path for f in os.scandir(path) if f.is_dir()]
         return max(subfolders, default=None)
 
-    checkpoint_dir = os.path.join(config["trainer"].pop("checkpoint_dir"), "logs")
-    last_run_dir = _get_last_subfolder_path(checkpoint_dir)
+    trainer_config = config["trainer"]
+    checkpoint_dir = trainer_config["checkpoint_dir"]
+    log_dir = trainer_config.get("log_dir", os.path.join(checkpoint_dir, "logs"))
+    os.makedirs(log_dir, exist_ok=True)
+    last_run_dir = _get_last_subfolder_path(log_dir)
     config_file_name = os.path.basename(config_path)
 
     if last_run_dir:

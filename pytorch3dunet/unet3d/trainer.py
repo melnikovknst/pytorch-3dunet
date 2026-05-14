@@ -144,6 +144,7 @@ class UNetTrainer:
         resume=None,
         pre_trained=None,
         max_val_images=100,
+        log_dir=None,
         device: TorchDevice | None = None,
     ):
         self.max_val_images = max_val_images
@@ -160,6 +161,7 @@ class UNetTrainer:
         self.log_after_iters = log_after_iters
         self.validate_iters = validate_iters
         self.eval_score_higher_is_better = eval_score_higher_is_better
+        self.log_dir = log_dir or os.path.join(checkpoint_dir, "logs")
         assert device, "Device must be specified"
         self.device = device
 
@@ -171,9 +173,7 @@ class UNetTrainer:
         else:
             self.best_eval_score = float("+inf")
 
-        self.writer = SummaryWriter(
-            log_dir=os.path.join(checkpoint_dir, "logs", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
-        )
+        self.writer = SummaryWriter(log_dir=os.path.join(self.log_dir, datetime.now().strftime("%Y-%m-%d_%H-%M-%S")))
 
         assert tensorboard_formatter is not None, "TensorboardFormatter must be provided"
         self.tensorboard_formatter = tensorboard_formatter

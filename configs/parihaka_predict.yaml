@@ -1,0 +1,38 @@
+model_path: outputs/checkpoints/best_checkpoint.pytorch
+
+model:
+  name: UNet3D
+  in_channels: 1
+  out_channels: 6
+  layer_order: gcr
+  f_maps: [32, 64, 128, 256]
+  num_groups: 8
+  final_sigmoid: false
+  is_segmentation: true
+
+predictor:
+  name: StandardPredictor
+  save_segmentation: true
+  output_dataset: segmentation
+
+loaders:
+  dataset: StandardHDF5Dataset
+  output_dir: outputs/predictions
+  batch_size: 1
+  num_workers: 4
+  raw_internal_path: raw
+  global_normalization: false
+
+  test:
+    file_paths:
+      - outputs/h5/parihaka_test.h5
+    slice_builder:
+      name: SliceBuilder
+      patch_shape: [64, 128, 128]
+      stride_shape: [48, 96, 96]
+      halo_shape: [8, 16, 16]
+    transformer:
+      raw:
+        - name: Standardize
+        - name: ToTensor
+          expand_dims: true
