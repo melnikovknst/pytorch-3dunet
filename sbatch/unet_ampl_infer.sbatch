@@ -6,8 +6,8 @@
 #SBATCH -c 4
 #SBATCH --mem=32G
 #SBATCH -t 48:00:00
-#SBATCH -o /dev/null
-#SBATCH -e /dev/null
+#SBATCH -o outputs/logs/slurm/%x.%j.out
+#SBATCH -e outputs/logs/slurm/%x.%j.err
 #
 # Add a GPU directive here if your Slurm cluster requires it, for example:
 ##SBATCH --gres=gpu:1
@@ -20,18 +20,24 @@ cd "$REPO_ROOT"
 
 mkdir -p outputs/logs/slurm outputs/checkpoints outputs/logs/tensorboard outputs/predictions outputs/visualizations outputs/h5
 
-JOB_OUT="outputs/logs/slurm/${SLURM_JOB_ID:-manual}_unet_ampl_infer.out"
-JOB_ERR="outputs/logs/slurm/${SLURM_JOB_ID:-manual}_unet_ampl_infer.err"
-exec > "${JOB_OUT}" 2> "${JOB_ERR}"
+module load nvidia/cuda
 
-# Keep the CUDA module style from the legacy unet_ampl.sbatch if modules are available on the cluster.
-if command -v module >/dev/null 2>&1; then
-  module load nvidia/cuda || true
-fi
-
-# TODO: activate the correct environment, for example:
+# TODO: activate the correct environment if .venv is not used, for example:
 # source ~/.bashrc
 # conda activate 3dunet
+if [[ -f .venv/bin/activate ]]; then
+  source .venv/bin/activate
+fi
+
+echo "job_id=${SLURM_JOB_ID:-manual}"
+echo "node=$(hostname)"
+echo "repo=${REPO_ROOT}"
+echo "submit_dir=${SLURM_SUBMIT_DIR:-unknown}"
+echo "cuda_visible_devices=${CUDA_VISIBLE_DEVICES:-unset}"
+echo "cpus_per_task=${SLURM_CPUS_PER_TASK:-unset}"
+nvidia-smi || true
+
+python -c "import h5py, matplotlib, numpy, torch, yaml"
 
 if [[ ! -f outputs/checkpoints/best_checkpoint.pytorch ]]; then
   echo "Missing checkpoint: outputs/checkpoints/best_checkpoint.pytorch" >&2
