@@ -31,7 +31,7 @@ fi
 
 OUTPUT_DIR="${REPO_ROOT}/outputs"
 SLURM_LOG_DIR="${OUTPUT_DIR}/logs/slurm"
-SCRIPT_LOG_DIR="${SLURM_LOG_DIR}/unet_ampl_train"
+SCRIPT_LOG_DIR="${SLURM_LOG_DIR}/${JOB_LOG_NAME:-unet_ampl_train}"
 JOB_OUT="${SCRIPT_LOG_DIR}/${SLURM_JOB_ID:-manual}.out"
 JOB_ERR="${SCRIPT_LOG_DIR}/${SLURM_JOB_ID:-manual}.err"
 CHECKPOINT_DIR="${OUTPUT_DIR}/checkpoints"
@@ -88,11 +88,32 @@ PROJECT_MARKER="${VENV_DIR}/.project-${PROJECT_HASH}.installed"
 if [ ! -f "${PROJECT_MARKER}" ]; then
     echo "Installing Python dependencies into ${VENV_DIR}"
     "${PYTHON_BIN}" -m pip install --upgrade pip setuptools wheel
+    if [ "${INSTALL_PYTORCH_CUDA:-1}" = "1" ]; then
+        TORCH_CUDA_VERSION="$("${PYTHON_BIN}" -c 'import torch; print(torch.version.cuda or "cpu")' 2>/dev/null || true)"
+        if [ "${TORCH_CUDA_VERSION}" != "12.6" ]; then
+            echo "Installing PyTorch build for CUDA 12.6"
+            "${PYTHON_BIN}" -m pip install --upgrade torch --index-url "${PYTORCH_CUDA_INDEX_URL:-https://download.pytorch.org/whl/cu126}"
+        fi
+    fi
     "${PYTHON_BIN}" -m pip install -e "${REPO_ROOT}"
+    if [ "${INSTALL_PYTORCH_CUDA:-1}" = "1" ]; then
+        TORCH_CUDA_VERSION="$("${PYTHON_BIN}" -c 'import torch; print(torch.version.cuda or "cpu")' 2>/dev/null || true)"
+        if [ "${TORCH_CUDA_VERSION}" != "12.6" ]; then
+            echo "Reinstalling PyTorch build for CUDA 12.6 after project dependency resolution"
+            "${PYTHON_BIN}" -m pip install --upgrade torch --index-url "${PYTORCH_CUDA_INDEX_URL:-https://download.pytorch.org/whl/cu126}"
+        fi
+    fi
     rm -f "${VENV_DIR}"/.project-*.installed
     touch "${PROJECT_MARKER}"
 else
     echo "Python dependencies already installed for current pyproject.toml"
+    if [ "${INSTALL_PYTORCH_CUDA:-1}" = "1" ]; then
+        TORCH_CUDA_VERSION="$("${PYTHON_BIN}" -c 'import torch; print(torch.version.cuda or "cpu")' 2>/dev/null || true)"
+        if [ "${TORCH_CUDA_VERSION}" != "12.6" ]; then
+            echo "Installing PyTorch build for CUDA 12.6"
+            "${PYTHON_BIN}" -m pip install --upgrade torch --index-url "${PYTORCH_CUDA_INDEX_URL:-https://download.pytorch.org/whl/cu126}"
+        fi
+    fi
 fi
 
 echo "job_id=${SLURM_JOB_ID:-manual}"
@@ -110,17 +131,59 @@ echo "h5=${H5_DIR}"
 echo "predictions=${PREDICTION_DIR}"
 echo "visualizations=${VISUALIZATION_DIR}"
 echo "python=${PYTHON_BIN}"
+echo "resume_checkpoint=${RESUME_CHECKPOINT:-none}"
+echo "run_inference_after_train=${RUN_INFERENCE_AFTER_TRAIN:-0}"
 "${PYTHON_BIN}" --version
 nvidia-smi
 
 "${PYTHON_BIN}" -c "import h5py, matplotlib, numpy, torch, yaml"
+if [ "${REQUIRE_CUDA:-1}" = "1" ]; then
+    "${PYTHON_BIN}" -c "import torch; raise SystemExit(0 if torch.cuda.is_available() else 'CUDA is not available to PyTorch. Check GPU allocation, NVIDIA driver, or PyTorch CUDA wheel.')"
+fi
 
 if [ ! -f "${H5_DIR}/parihaka_train.h5" ] || [ ! -f "${H5_DIR}/parihaka_val.h5" ] || [ ! -f "${H5_DIR}/parihaka_test.h5" ]; then
     "${PYTHON_BIN}" scripts/prepare_parihaka_h5.py
 fi
 
+read -r PATCH_D PATCH_H PATCH_W < <("${PYTHON_BIN}" -c 'import yaml; cfg = yaml.safe_load(open("configs/parihaka_train.yaml")); print(*cfg["loaders"]["train"]["slice_builder"]["patch_shape"])')
+PATCH_SHAPE=("${PATCH_D}" "${PATCH_H}" "${PATCH_W}")
+echo "patch_shape=${PATCH_SHAPE[*]}"
+
+"${PYTHON_BIN}" scripts/rebalance_parihaka_h5.py --patch-shape "${PATCH_SHAPE[@]}" --chunk-depth "${REBALANCE_CHUNK_DEPTH:-16}"
+"${PYTHON_BIN}" scripts/validate_parihaka_h5.py --patch-shape "${PATCH_SHAPE[@]}"
+
+TRAIN_ARGS=(--config configs/parihaka_train.yaml)
+ACTIVE_CHECKPOINT_DIR="${CHECKPOINT_DIR}"
+if [ -n "${RESUME_CHECKPOINT:-}" ]; then
+    if [ ! -f "${RESUME_CHECKPOINT}" ]; then
+        echo "ERROR: RESUME_CHECKPOINT does not exist: ${RESUME_CHECKPOINT}"
+        exit 1
+    fi
+    TRAIN_ARGS+=(--trainer.resume "${RESUME_CHECKPOINT}")
+    ACTIVE_CHECKPOINT_DIR="$(cd "$(dirname "${RESUME_CHECKPOINT}")" && pwd)"
+fi
+
 if command -v train3dunet >/dev/null 2>&1; then
-    train3dunet --config configs/parihaka_train.yaml
+    train3dunet "${TRAIN_ARGS[@]}"
 else
-    "${PYTHON_BIN}" -m pytorch3dunet.train --config configs/parihaka_train.yaml
+    "${PYTHON_BIN}" -m pytorch3dunet.train "${TRAIN_ARGS[@]}"
+fi
+
+if [ "${RUN_INFERENCE_AFTER_TRAIN:-0}" = "1" ]; then
+    PREDICT_MODEL_PATH="${PREDICT_MODEL_PATH:-${ACTIVE_CHECKPOINT_DIR}/best_checkpoint.pytorch}"
+    if [ ! -f "${PREDICT_MODEL_PATH}" ]; then
+        echo "ERROR: missing prediction checkpoint: ${PREDICT_MODEL_PATH}"
+        exit 1
+    fi
+
+    PREDICT_ARGS=(--config configs/parihaka_predict.yaml --model_path "${PREDICT_MODEL_PATH}")
+    if command -v predict3dunet >/dev/null 2>&1; then
+        predict3dunet "${PREDICT_ARGS[@]}"
+    else
+        "${PYTHON_BIN}" -m pytorch3dunet.predict "${PREDICT_ARGS[@]}"
+    fi
+
+    if [ "${RUN_VISUALIZATION_AFTER_INFERENCE:-1}" = "1" ]; then
+        "${PYTHON_BIN}" scripts/visualize_parihaka_predictions.py
+    fi
 fi
