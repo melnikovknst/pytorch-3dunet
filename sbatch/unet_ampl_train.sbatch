@@ -142,7 +142,10 @@ if [ "${REQUIRE_CUDA:-1}" = "1" ]; then
 fi
 
 if [ ! -f "${H5_DIR}/parihaka_train.h5" ] || [ ! -f "${H5_DIR}/parihaka_val.h5" ] || [ ! -f "${H5_DIR}/parihaka_test.h5" ]; then
+    echo "One or more Parihaka H5 splits are missing; creating H5 files from NPZ sources."
     "${PYTHON_BIN}" scripts/prepare_parihaka_h5.py
+else
+    echo "Found existing Parihaka H5 splits in ${H5_DIR}; skipping NPZ to H5 preparation."
 fi
 
 read -r PATCH_D PATCH_H PATCH_W < <("${PYTHON_BIN}" -c 'import yaml; cfg = yaml.safe_load(open("configs/parihaka_train.yaml")); print(*cfg["loaders"]["train"]["slice_builder"]["patch_shape"])')
