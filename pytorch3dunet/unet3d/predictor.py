@@ -117,15 +117,11 @@ class StandardPredictor(AbstractPredictor):
         # dimensionality of the output predictions
         volume_shape = test_loader.dataset.volume_shape
 
-        if self.save_segmentation:
-            # single channel segmentation map
-            prediction_shape = volume_shape
+        if self.prediction_channel is not None:
+            # single channel prediction map
+            prediction_shape = (1,) + volume_shape
         else:
-            if self.prediction_channel is not None:
-                # single channel prediction map
-                prediction_shape = (1,) + volume_shape
-            else:
-                prediction_shape = (self.out_channels,) + volume_shape
+            prediction_shape = (self.out_channels,) + volume_shape
 
         # create destination H5 file
         output_file = _get_output_file(dataset=test_loader.dataset, output_dir=self.output_dir)
@@ -134,6 +130,7 @@ class StandardPredictor(AbstractPredictor):
             # allocate prediction arrays
             logger.info("Allocating prediction arrays...")
             prediction_array = self._allocate_prediction_array(prediction_shape, h5_output_file)
+            normalization_mask = self._allocate_normalization_mask(volume_shape, h5_output_file)
 
             # determine halo used for padding
             patch_halo = test_loader.dataset.halo_shape
@@ -169,34 +166,31 @@ class StandardPredictor(AbstractPredictor):
                     prediction = prediction.cpu().numpy()
                     # for each batch sample
                     for pred, index in zip(prediction, indices, strict=True):
-                        if self.save_segmentation:
-                            # if single channel, binarize
-                            if pred.shape[0] == 1:
-                                pred = pred[0] > 0.5
-                            else:
-                                # use the argmax of the prediction
-                                pred = np.argmax(pred, axis=0)
-                            pred = pred.astype("uint16")
-                            index = tuple(index)
+                        spatial_index = tuple(index)
+                        if self.prediction_channel is None:
+                            channel_slice = slice(0, self.out_channels)
                         else:
-                            # save patch index: (C,D,H,W)
-                            if self.prediction_channel is None:
-                                channel_slice = slice(0, self.out_channels)
-                            else:
-                                # use only the specified channel
-                                channel_slice = slice(0, 1)
-                                pred = np.expand_dims(pred[self.prediction_channel], axis=0)
-                            # add channel dimension to the index
-                            index = (channel_slice,) + tuple(index)
+                            # use only the specified channel
+                            channel_slice = slice(0, 1)
+                            pred = np.expand_dims(pred[self.prediction_channel], axis=0)
 
                         # accumulate probabilities into the output prediction array
-                        prediction_array[index] = pred
+                        prediction_index = (channel_slice,) + spatial_index
+                        self._accumulate_prediction(prediction_array, prediction_index, pred)
+                        self._accumulate_prediction(normalization_mask, spatial_index, 1.0)
 
             logger.info(f"Finished inference in {time.perf_counter() - start:.2f} seconds")
+            self._normalize_prediction_array(prediction_array, normalization_mask)
+
+            prediction_accumulator = prediction_array
+            if self.save_segmentation:
+                prediction_array = self._prediction_to_segmentation(prediction_array)
+
             # save results
             output_type = "segmentation" if self.save_segmentation else "probability maps"
             logger.info(f"Saving {output_type} to: {output_file}")
             self._create_prediction_dataset(h5_output_file, prediction_array)
+            self._cleanup_prediction_datasets(h5_output_file, prediction_accumulator, normalization_mask)
 
             if self.performance_metric is not None:
                 # load gt from the dataset
@@ -217,12 +211,41 @@ class StandardPredictor(AbstractPredictor):
         h5_output_file.create_dataset(self.output_dataset, data=prediction_array, compression="gzip")
 
     def _allocate_prediction_array(self, output_shape, output_file):
-        if self.save_segmentation:
-            dtype = "uint16"
-        else:
-            dtype = "float32"
         # initialize the output prediction arrays
-        return np.zeros(output_shape, dtype=dtype)
+        return np.zeros(output_shape, dtype="float32")
+
+    def _allocate_normalization_mask(self, output_shape, output_file):
+        return np.zeros(output_shape, dtype="float32")
+
+    @staticmethod
+    def _accumulate_prediction(prediction_array, index, value):
+        prediction_array[index] = prediction_array[index] + value
+
+    @staticmethod
+    def _normalize_prediction_array(prediction_array, normalization_mask):
+        if isinstance(normalization_mask, h5py.Dataset):
+            normalization_mask = normalization_mask[...]
+
+        normalization_mask[normalization_mask == 0] = 1
+        if isinstance(prediction_array, h5py.Dataset):
+            for channel in range(prediction_array.shape[0]):
+                prediction_array[channel] = prediction_array[channel] / normalization_mask
+        else:
+            prediction_array /= normalization_mask[None, ...]
+
+    @staticmethod
+    def _prediction_to_segmentation(prediction_array):
+        if isinstance(prediction_array, h5py.Dataset):
+            prediction_array = prediction_array[...]
+
+        if prediction_array.shape[0] == 1:
+            prediction_array = prediction_array[0] > 0.5
+        else:
+            prediction_array = np.argmax(prediction_array, axis=0)
+        return prediction_array.astype("uint16")
+
+    def _cleanup_prediction_datasets(self, output_file, prediction_array, normalization_mask):
+        pass
 
 
 class LazyPredictor(StandardPredictor):
@@ -259,19 +282,35 @@ class LazyPredictor(StandardPredictor):
         )
 
     def _allocate_prediction_array(self, output_shape, output_file):
-        if self.save_segmentation:
-            dtype = "uint16"
-        else:
-            dtype = "float32"
         # allocate datasets for probability maps
+        dataset_name = self.output_dataset
+        if self.save_segmentation:
+            dataset_name = f"{self.output_dataset}_probabilities"
         prediction_array = output_file.create_dataset(
-            self.output_dataset, shape=output_shape, dtype=dtype, chunks=True, compression="gzip"
+            dataset_name, shape=output_shape, dtype="float32", chunks=True, compression="gzip"
         )
         return prediction_array
 
+    def _allocate_normalization_mask(self, output_shape, output_file):
+        return output_file.create_dataset(
+            "__normalization_mask", shape=output_shape, dtype="float32", chunks=True, compression="gzip"
+        )
+
     def _create_prediction_dataset(self, h5_output_file, prediction_array):
         # no need to save the prediction array, it is already saved in the H5 file
-        pass
+        if self.save_segmentation:
+            h5_output_file.create_dataset(self.output_dataset, data=prediction_array, compression="gzip")
+
+    def _cleanup_prediction_datasets(self, output_file, prediction_array, normalization_mask):
+        datasets = [normalization_mask]
+        if self.save_segmentation:
+            datasets.append(prediction_array)
+
+        for dataset in datasets:
+            if isinstance(dataset, h5py.Dataset):
+                dataset_name = dataset.name.lstrip("/")
+                if dataset_name in output_file:
+                    del output_file[dataset_name]
 
 
 class DSB2018Predictor(AbstractPredictor):

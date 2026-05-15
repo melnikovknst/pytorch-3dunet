@@ -8,9 +8,6 @@
 #SBATCH -t 48:00:00
 #SBATCH -o /dev/null
 #SBATCH -e /dev/null
-#
-# Add a GPU directive here if your Slurm cluster requires it, for example:
-##SBATCH --gres=gpu:1
 
 set -euo pipefail
 export PYTHONUNBUFFERED=1

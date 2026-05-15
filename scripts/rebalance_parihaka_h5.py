@@ -64,12 +64,19 @@ def _copy_axis_range(
     dst_start: int,
     length: int,
     chunk_depth: int,
+    progress_label: str | None = None,
+    progress_offset: int = 0,
+    progress_total: int | None = None,
 ) -> None:
     for offset in range(0, length, chunk_depth):
         size = min(chunk_depth, length - offset)
         src_idx = _slice(axis, src_start + offset, src_start + offset + size, src.ndim)
         dst_idx = _slice(axis, dst_start + offset, dst_start + offset + size, dst.ndim)
         dst[dst_idx] = src[src_idx]
+        if progress_label is not None:
+            copied = progress_offset + offset + size
+            total = progress_total if progress_total is not None else length
+            print(f"  {progress_label}: copied {copied}/{total} slices", flush=True)
 
 
 def _create_dataset(out_h5: h5py.File, name: str, shape: tuple[int, ...], dtype: Any) -> h5py.Dataset:
@@ -146,6 +153,7 @@ def _copy_global_range(
     dst_start: int,
     length: int,
     chunk_depth: int,
+    progress_label: str,
 ) -> None:
     copied = 0
     cursor = global_start
@@ -164,6 +172,9 @@ def _copy_global_range(
             dst_start=dst_start + copied,
             length=copy_length,
             chunk_depth=chunk_depth,
+            progress_label=progress_label,
+            progress_offset=copied,
+            progress_total=length,
         )
         cursor += copy_length
         copied += copy_length
@@ -217,6 +228,11 @@ def _write_rebalanced_files(
                     _copy_attrs(reference.attrs, dst.attrs)
 
                     start, stop = new_ranges[split]
+                    print(
+                        f"Writing {split}:{dataset_name} shape={tuple(new_shape)} "
+                        f"from global slice range [{start}, {stop})",
+                        flush=True,
+                    )
                     _copy_global_range(
                         sources,
                         dst,
@@ -225,6 +241,7 @@ def _write_rebalanced_files(
                         dst_start=0,
                         length=stop - start,
                         chunk_depth=chunk_depth,
+                        progress_label=f"{split}:{dataset_name}",
                     )
 
                     if dataset_name == "raw":

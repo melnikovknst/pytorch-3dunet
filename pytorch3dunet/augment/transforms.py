@@ -37,10 +37,17 @@ class RandomFlip:
         axis_prob: Probability of flipping along each axis. Default: 0.5.
     """
 
-    def __init__(self, random_state: np.random.RandomState, axis_prob: float = 0.5, **kwargs):
+    def __init__(
+        self,
+        random_state: np.random.RandomState,
+        axis_prob: float = 0.5,
+        axes: tuple[int, ...] | list[int] | None = None,
+        **kwargs,
+    ):
         assert random_state is not None, "RandomState cannot be None"
         self.random_state = random_state
-        self.axes = (0, 1, 2)
+        self.axes = tuple(axes) if axes is not None else (0, 1, 2)
+        assert all(axis in (0, 1, 2) for axis in self.axes), f"Invalid flip axes: {self.axes}"
         self.axis_prob = axis_prob
 
     def __call__(self, m: np.ndarray) -> np.ndarray:

@@ -263,6 +263,24 @@ def _metrics(label: np.ndarray, pred: np.ndarray) -> tuple[float, dict[str, floa
     return voxel_accuracy, per_class_iou, mean_iou
 
 
+def _class_distribution(array: np.ndarray) -> dict[str, dict[str, float | int]]:
+    total = int(array.size)
+    distribution = {}
+    for class_id in range(NUM_CLASSES):
+        count = int(np.count_nonzero(array == class_id))
+        distribution[str(class_id)] = {
+            "count": count,
+            "fraction": float(count / total) if total else 0.0,
+        }
+    return distribution
+
+
+def _confusion_matrix(label: np.ndarray, pred: np.ndarray) -> list[list[int]]:
+    flat_index = NUM_CLASSES * label.astype(np.int64, copy=False).ravel() + pred.astype(np.int64, copy=False).ravel()
+    matrix = np.bincount(flat_index, minlength=NUM_CLASSES * NUM_CLASSES)
+    return matrix.reshape(NUM_CLASSES, NUM_CLASSES).astype(int).tolist()
+
+
 def main() -> None:
     args = parse_args()
     h5_path = Path(args.h5)
@@ -307,6 +325,9 @@ def main() -> None:
         "voxel_accuracy": voxel_accuracy,
         "per_class_iou": per_class_iou,
         "mean_iou": mean_iou,
+        "label_distribution": _class_distribution(label),
+        "prediction_distribution": _class_distribution(pred),
+        "confusion_matrix_rows_label_cols_prediction": _confusion_matrix(label, pred),
         "num_classes": NUM_CLASSES,
     }
     summary_path = out_dir / "visualization_summary.json"
