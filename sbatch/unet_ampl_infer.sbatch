@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J unet_ampl_infer
+#SBATCH -J 3Dunet_ampl_infer
 #SBATCH -p a100serv
 #SBATCH -N 1
 #SBATCH -n 1
