@@ -4,7 +4,7 @@
 #SBATCH -N 1
 #SBATCH -n 1
 #SBATCH -c 4
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH -t 48:00:00
 #SBATCH -o outputs/logs/slurm/%x.%j.out
 #SBATCH -e outputs/logs/slurm/%x.%j.err
