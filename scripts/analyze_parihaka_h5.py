@@ -40,6 +40,26 @@ def _shape(dataset: h5py.Dataset) -> list[int]:
     return [int(value) for value in dataset.shape]
 
 
+def _raw_spatial_shape(raw_shape: list[int] | None) -> list[int] | None:
+    if raw_shape is None:
+        return None
+    if len(raw_shape) == 3:
+        return raw_shape
+    if len(raw_shape) == 4:
+        return raw_shape[1:]
+    return None
+
+
+def _raw_channel_count(raw_shape: list[int] | None) -> int | None:
+    if raw_shape is None:
+        return None
+    if len(raw_shape) == 3:
+        return 1
+    if len(raw_shape) == 4:
+        return int(raw_shape[0])
+    return None
+
+
 def _label_value(value: Any) -> int | float | str:
     if isinstance(value, np.generic):
         value = value.item()
@@ -222,6 +242,8 @@ def analyze_split(
     result: dict[str, Any] = {
         "path": str(path),
         "raw_shape": None,
+        "raw_spatial_shape": None,
+        "raw_channels": None,
         "label_shape": None,
         "raw_dtype": None,
         "label_dtype": None,
@@ -240,6 +262,8 @@ def analyze_split(
             result.setdefault("missing_datasets", []).append(raw_key)
         else:
             result["raw_shape"] = _shape(raw_dataset)
+            result["raw_spatial_shape"] = _raw_spatial_shape(result["raw_shape"])
+            result["raw_channels"] = _raw_channel_count(result["raw_shape"])
             result["raw_dtype"] = str(raw_dataset.dtype)
 
         if not isinstance(label_dataset, h5py.Dataset):
@@ -248,7 +272,7 @@ def analyze_split(
 
         result["label_shape"] = _shape(label_dataset)
         result["label_dtype"] = str(label_dataset.dtype)
-        result["shape_match"] = result["raw_shape"] == result["label_shape"]
+        result["shape_match"] = result["raw_spatial_shape"] == result["label_shape"]
         result.update(
             _analyze_labels(
                 label_dataset,
@@ -280,7 +304,10 @@ def print_split_report(split: str, result: dict[str, Any], min_class_voxels: int
     if missing_datasets:
         print(f"missing datasets: {missing_datasets}")
 
-    print(f"raw:   shape={result.get('raw_shape')}, dtype={result.get('raw_dtype')}")
+    print(
+        f"raw:   shape={result.get('raw_shape')}, spatial={result.get('raw_spatial_shape')}, "
+        f"channels={result.get('raw_channels')}, dtype={result.get('raw_dtype')}"
+    )
     print(f"label: shape={result.get('label_shape')}, dtype={result.get('label_dtype')}")
     print(f"shape_match: {result.get('shape_match')}")
 

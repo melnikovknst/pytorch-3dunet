@@ -20,6 +20,7 @@ DEFAULT_LABELS = "../data/ampl3d/parihaka_labels.npz"
 FALLBACK_DATA = "../data/ampl_3d/parihaka_data.npz"
 FALLBACK_LABELS = "../data/ampl_3d/parihaka_labels.npz"
 DEFAULT_OUT_DIR = "outputs/h5"
+DEFAULT_PATCH_SHAPE = (64, 128, 128)
 SPLIT_NAMES = ("train", "val", "test")
 
 
@@ -31,6 +32,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-key", default=None, help="Explicit NPZ key for the amplitude volume")
     parser.add_argument("--label-key", default=None, help="Explicit NPZ key for the label volume")
     parser.add_argument("--split-axis", type=int, default=2, help="Spatial axis used for contiguous train/val/test split")
+    parser.add_argument(
+        "--patch-shape",
+        nargs=3,
+        type=int,
+        default=list(DEFAULT_PATCH_SHAPE),
+        metavar=("D", "H", "W"),
+        help="Minimum spatial shape that every split must support",
+    )
     parser.add_argument("--train-ratio", type=float, default=0.70)
     parser.add_argument("--val-ratio", type=float, default=0.10)
     parser.add_argument("--test-ratio", type=float, default=0.20)
@@ -195,21 +204,42 @@ def _normalize_labels(labels: np.ndarray) -> tuple[np.ndarray, list[int], list[i
     return labels, unique_before_list, unique_after_list
 
 
-def _split_ranges(axis_size: int, ratios: tuple[float, float, float]) -> dict[str, tuple[int, int]]:
+def _require_positive(name: str, values: tuple[int, ...]) -> None:
+    if any(value <= 0 for value in values):
+        raise ValueError(f"{name} values must be positive, got {values}")
+
+
+def _split_ranges(
+    axis_size: int,
+    ratios: tuple[float, float, float],
+    *,
+    min_size: int = 1,
+    adjust_to_min: bool = True,
+) -> dict[str, tuple[int, int]]:
     if axis_size <= 0:
         raise ValueError(f"Invalid split axis size: {axis_size}")
+    if min_size <= 0:
+        raise ValueError(f"min_size must be positive, got {min_size}")
     if any(r < 0 for r in ratios):
         raise ValueError(f"Ratios must be non-negative, got: {ratios}")
     ratio_sum = sum(ratios)
     if not np.isclose(ratio_sum, 1.0, atol=1e-6):
         raise ValueError(f"Ratios must sum to 1.0, got {ratio_sum:.8f}")
+    active_indices = [idx for idx, ratio in enumerate(ratios) if ratio > 0]
+    required_total = min_size * len(active_indices)
+    if required_total > axis_size:
+        raise ValueError(
+            f"Cannot split axis of length {axis_size}: {len(active_indices)} non-empty splits require at least "
+            f"{required_total} voxels to satisfy min split size {min_size}. Use a smaller patch_shape, fewer splits, "
+            "or different split ratios."
+        )
 
     raw_counts = np.array(ratios, dtype=np.float64) * axis_size
     counts = np.floor(raw_counts).astype(int)
     for idx in np.argsort(-(raw_counts - counts))[: axis_size - int(counts.sum())]:
         counts[idx] += 1
 
-    if axis_size >= len([r for r in ratios if r > 0]):
+    if axis_size >= len(active_indices):
         for idx, ratio in enumerate(ratios):
             if ratio > 0 and counts[idx] == 0:
                 donor = int(np.argmax(counts))
@@ -217,6 +247,36 @@ def _split_ranges(axis_size: int, ratios: tuple[float, float, float]) -> dict[st
                     break
                 counts[donor] -= 1
                 counts[idx] += 1
+
+    too_small = [SPLIT_NAMES[idx] for idx in active_indices if counts[idx] < min_size]
+    if too_small and not adjust_to_min:
+        raise ValueError(
+            f"Split counts {dict(zip(SPLIT_NAMES, counts.tolist(), strict=True))} are too small for "
+            f"min split size {min_size}: {too_small}"
+        )
+
+    for idx in active_indices:
+        deficit = min_size - int(counts[idx])
+        if deficit <= 0:
+            continue
+        donor_order = sorted(active_indices, key=lambda donor_idx: int(counts[donor_idx] - min_size), reverse=True)
+        for donor_idx in donor_order:
+            if donor_idx == idx:
+                continue
+            surplus = int(counts[donor_idx] - min_size)
+            if surplus <= 0:
+                continue
+            transfer = min(deficit, surplus)
+            counts[donor_idx] -= transfer
+            counts[idx] += transfer
+            deficit -= transfer
+            if deficit == 0:
+                break
+        if deficit > 0:
+            raise ValueError(
+                f"Cannot adjust split counts {dict(zip(SPLIT_NAMES, counts.tolist(), strict=True))} to satisfy "
+                f"min split size {min_size}. Use a smaller patch_shape or different split ratios."
+            )
 
     train_end = int(counts[0])
     val_end = int(counts[0] + counts[1])
@@ -231,6 +291,30 @@ def _slice_volume(array: np.ndarray, axis: int, start: int, stop: int) -> np.nda
     index = [slice(None)] * array.ndim
     index[axis] = slice(start, stop)
     return array[tuple(index)]
+
+
+def _validate_split_shapes(
+    source_shape: tuple[int, int, int],
+    split_axis: int,
+    ranges: dict[str, tuple[int, int]],
+    patch_shape: tuple[int, int, int],
+) -> dict[str, list[int]]:
+    split_shapes = {}
+    for split_name in SPLIT_NAMES:
+        start, stop = ranges[split_name]
+        split_shape = list(source_shape)
+        split_shape[split_axis] = stop - start
+        too_small = [
+            f"axis {axis}: split={size}, patch={patch}"
+            for axis, (size, patch) in enumerate(zip(split_shape, patch_shape, strict=True))
+            if size < patch
+        ]
+        if too_small:
+            raise ValueError(
+                f"{split_name} split shape {tuple(split_shape)} is smaller than patch_shape {patch_shape}: {too_small}"
+            )
+        split_shapes[split_name] = split_shape
+    return split_shapes
 
 
 def _write_h5(path: Path, raw: np.ndarray, labels: np.ndarray) -> None:
@@ -272,16 +356,15 @@ def main() -> None:
     if not 0 <= args.split_axis < raw.ndim:
         raise ValueError(f"--split-axis must be in [0, {raw.ndim - 1}], got {args.split_axis}")
 
+    patch_shape = tuple(args.patch_shape)
+    _require_positive("--patch-shape", patch_shape)
     labels, unique_before, unique_after = _normalize_labels(labels)
     ratios = (args.train_ratio, args.val_ratio, args.test_ratio)
-    ranges = _split_ranges(raw.shape[args.split_axis], ratios)
+    ranges = _split_ranges(raw.shape[args.split_axis], ratios, min_size=patch_shape[args.split_axis])
+    split_shapes = _validate_split_shapes(raw.shape, args.split_axis, ranges, patch_shape)
 
-    split_shapes = {}
     output_files = {}
-    for split_name, (start, stop) in ranges.items():
-        split_shape = list(raw.shape)
-        split_shape[args.split_axis] = stop - start
-        split_shapes[split_name] = split_shape
+    for split_name in SPLIT_NAMES:
         output_files[split_name] = str(out_dir / f"parihaka_{split_name}.h5")
 
     summary = {
@@ -296,6 +379,7 @@ def main() -> None:
         "unique_labels_after": unique_after,
         "split_axis": args.split_axis,
         "split_axis_note": "Axis order is preserved; splits are contiguous spatial blocks along this axis.",
+        "patch_shape": list(patch_shape),
         "train_val_test_ratios": {"train": args.train_ratio, "val": args.val_ratio, "test": args.test_ratio},
         "train_val_test_index_ranges": {name: list(value) for name, value in ranges.items()},
         "output_files": output_files,

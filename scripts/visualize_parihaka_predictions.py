@@ -5,11 +5,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import h5py
+
+os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "matplotlib"))
+os.environ.setdefault("XDG_CACHE_HOME", str(Path(tempfile.gettempdir()) / "fontconfig"))
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -29,10 +35,18 @@ NUM_CLASSES = 6
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--h5", default=DEFAULT_H5, help="HDF5 file with raw and label datasets")
-    parser.add_argument("--pred", default=None, help="Prediction HDF5 file or directory; auto-detected if omitted")
+    parser.add_argument(
+        "--pred",
+        "--prediction",
+        dest="pred",
+        default=None,
+        help="Prediction HDF5 file or directory; auto-detected if omitted",
+    )
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="Directory for PNGs and summary JSON")
     parser.add_argument("--num-slices", type=int, default=10, help="Number of evenly spaced slices to render")
+    parser.add_argument("--indices", nargs="+", type=int, default=None, help="Explicit slice indices to render")
     parser.add_argument("--axis", type=int, default=0, help="Slice axis")
+    parser.add_argument("--raw-channel", type=int, default=0, help="Raw channel to visualize when raw is [C,D,H,W]")
     return parser.parse_args()
 
 
@@ -137,6 +151,19 @@ def _slice_indices(length: int, num_slices: int) -> list[int]:
     for idx in indices:
         if idx not in deduped:
             deduped.append(idx)
+    return deduped
+
+
+def _validate_indices(indices: list[int], length: int, axis: int) -> list[int]:
+    if not indices:
+        raise ValueError("--indices must contain at least one value when provided")
+    invalid = [index for index in indices if index < 0 or index >= length]
+    if invalid:
+        raise ValueError(f"--indices out of bounds for axis {axis} with length {length}: {invalid}")
+    deduped = []
+    for index in indices:
+        if index not in deduped:
+            deduped.append(index)
     return deduped
 
 
@@ -292,19 +319,36 @@ def main() -> None:
         raw = h5["raw"][...]
         label = h5["label"][...].astype(np.uint8, copy=False)
 
-    if raw.shape != label.shape:
-        raise ValueError(f"Raw and label shapes differ: raw={raw.shape}, label={label.shape}")
-    if not 0 <= args.axis < raw.ndim:
-        raise ValueError(f"--axis must be in [0, {raw.ndim - 1}], got {args.axis}")
+    if raw.ndim == 3:
+        raw_for_display = raw
+        raw_channels = 1
+        if args.raw_channel != 0:
+            raise ValueError(f"--raw-channel must be 0 for 3D raw, got {args.raw_channel}")
+    elif raw.ndim == 4:
+        raw_channels = int(raw.shape[0])
+        if not 0 <= args.raw_channel < raw_channels:
+            raise ValueError(f"--raw-channel must be in [0, {raw_channels - 1}], got {args.raw_channel}")
+        raw_for_display = raw[args.raw_channel]
+    else:
+        raise ValueError(f"Unsupported raw shape {raw.shape}; expected [D,H,W] or [C,D,H,W]")
+
+    if raw_for_display.shape != label.shape:
+        raise ValueError(f"Raw spatial and label shapes differ: raw={raw_for_display.shape}, label={label.shape}")
+    if not 0 <= args.axis < label.ndim:
+        raise ValueError(f"--axis must be in [0, {label.ndim - 1}], got {args.axis}")
 
     pred, prediction_key = _load_prediction(pred_path, label.shape)
     if pred.shape != label.shape:
         raise ValueError(f"Prediction and label shapes differ: prediction={pred.shape}, label={label.shape}")
 
-    indices = _slice_indices(label.shape[args.axis], args.num_slices)
+    indices = (
+        _validate_indices(args.indices, label.shape[args.axis], args.axis)
+        if args.indices is not None
+        else _slice_indices(label.shape[args.axis], args.num_slices)
+    )
     for out_index, slice_index in enumerate(indices):
         _render_slice(
-            _take_slice(raw, args.axis, slice_index),
+            _take_slice(raw_for_display, args.axis, slice_index),
             _take_slice(label, args.axis, slice_index),
             _take_slice(pred, args.axis, slice_index),
             args.axis,
@@ -312,14 +356,21 @@ def main() -> None:
             out_dir / f"slice_{out_index:03d}.png",
         )
 
-    _render_grid(raw, label, pred, indices, args.axis, out_dir / "parihaka_10_slices_grid.png")
+    _render_grid(raw_for_display, label, pred, indices, args.axis, out_dir / "parihaka_10_slices_grid.png")
     voxel_accuracy, per_class_iou, mean_iou = _metrics(label, pred)
     summary = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "h5_path": str(h5_path),
         "prediction_path": str(pred_path),
         "prediction_key": prediction_key,
-        "shapes": {"raw": list(raw.shape), "label": list(label.shape), "prediction": list(pred.shape)},
+        "shapes": {
+            "raw": list(raw.shape),
+            "raw_display": list(raw_for_display.shape),
+            "label": list(label.shape),
+            "prediction": list(pred.shape),
+        },
+        "raw_channels": raw_channels,
+        "raw_channel": args.raw_channel,
         "slice_indices": indices,
         "axis": args.axis,
         "voxel_accuracy": voxel_accuracy,
