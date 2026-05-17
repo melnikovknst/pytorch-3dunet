@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 
 
-DEFAULT_H5_DIR = "outputs/h5"
+DEFAULT_H5_DIR = "outputs/h5_parihaka"
 DEFAULT_OUT_JSON = "outputs/diagnostics/parihaka_h5_analysis.json"
 SPLITS = ("train", "val", "test")
 

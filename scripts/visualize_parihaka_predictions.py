@@ -25,9 +25,9 @@ import numpy as np
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
 
-DEFAULT_H5 = "outputs/h5/parihaka_test.h5"
-DEFAULT_PRED_DIR = "outputs/predictions"
-DEFAULT_OUT_DIR = "outputs/visualizations"
+DEFAULT_H5 = "outputs/h5_parihaka/parihaka_test.h5"
+DEFAULT_PRED_DIR = "outputs/predictions_parihaka"
+DEFAULT_OUT_DIR = "outputs/visualizations_parihaka"
 PREDICTION_KEY_PRIORITY = ("segmentation", "predictions", "prediction", "pred")
 NUM_CLASSES = 6
 
@@ -208,7 +208,7 @@ def _render_slice(
 
     fig, axes = plt.subplots(1, 4, figsize=(16, 4.2), constrained_layout=True)
     axes[0].imshow(raw_slice, cmap="gray", vmin=vmin, vmax=vmax)
-    axes[0].set_title(f"Amplitude axis={axis} index={index}")
+    axes[0].set_title(f"Raw amplitude axis={axis} index={index}")
     axes[1].imshow(label_slice, cmap=mask_cmap, norm=mask_norm)
     axes[1].set_title("Expert Label")
     axes[2].imshow(pred_slice, cmap=mask_cmap, norm=mask_norm)
@@ -260,7 +260,7 @@ def _render_grid(
             axes[row, col].set_xticks([])
             axes[row, col].set_yticks([])
 
-    for col, title in enumerate(("Amplitude", "Expert Label", "Predicted Mask", "Error Map")):
+    for col, title in enumerate(("Raw amplitude", "Expert Label", "Predicted Mask", "Error Map")):
         axes[0, col].set_title(title)
 
     if mask_image is not None:

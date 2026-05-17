@@ -12,9 +12,9 @@ import numpy as np
 import yaml
 
 
-DEFAULT_H5_DIR = "outputs/h5_axis1_multichannel"
-DEFAULT_TRAIN_CONFIG = "configs/parihaka_train_multichannel.yaml"
-DEFAULT_PREDICT_CONFIG = "configs/parihaka_predict_multichannel.yaml"
+DEFAULT_H5_DIR = "outputs/h5_parihaka"
+DEFAULT_TRAIN_CONFIG = "configs/parihaka_train.yaml"
+DEFAULT_PREDICT_CONFIG = "configs/parihaka_predict.yaml"
 SPLITS = ("train", "val", "test")
 FORBIDDEN_TRANSFORMS = {"Standardize", "RandomFlip", "RandomRotate", "RandomRotate90", "ElasticDeformation"}
 PREDICTION_KEY_PRIORITY = ("segmentation", "predictions", "prediction", "pred")
@@ -231,6 +231,7 @@ def main() -> None:
     predict_in_channels = predict_config.get("model", {}).get("in_channels")
     train_out_channels = train_config.get("model", {}).get("out_channels")
     predict_out_channels = predict_config.get("model", {}).get("out_channels")
+    loss_config = train_config.get("loss", {})
 
     if train_in_channels != args.expected_channels:
         errors.append(f"train model.in_channels must be {args.expected_channels}, got {train_in_channels}")
@@ -240,6 +241,22 @@ def main() -> None:
         errors.append(f"train model.out_channels must be {args.num_classes}, got {train_out_channels}")
     if predict_out_channels != train_out_channels:
         errors.append(f"predict model.out_channels {predict_out_channels} != train model.out_channels {train_out_channels}")
+
+    if not isinstance(loss_config, dict):
+        errors.append("train config loss section must be a mapping")
+    else:
+        loss_name = loss_config.get("name")
+        if loss_name not in ("WeightedCrossEntropyLoss", "CrossEntropyLoss"):
+            errors.append(f"train config loss.name should be weighted CE, got {loss_name!r}")
+        weights = loss_config.get("weight")
+        if not isinstance(weights, list):
+            errors.append("train config loss.weight must be a list")
+        elif len(weights) != args.num_classes:
+            errors.append(f"train config loss.weight length must be {args.num_classes}, got {len(weights)}")
+        else:
+            bad_weights = [value for value in weights if not isinstance(value, int | float) or float(value) <= 0]
+            if bad_weights:
+                errors.append(f"train config loss.weight must contain positive numbers, got bad values {bad_weights}")
 
     train_patch = tuple(train_loaders.get("train", {}).get("slice_builder", {}).get("patch_shape", ()))
     val_patch = tuple(train_loaders.get("val", {}).get("slice_builder", {}).get("patch_shape", ()))

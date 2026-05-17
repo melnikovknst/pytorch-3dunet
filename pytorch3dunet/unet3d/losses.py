@@ -202,18 +202,23 @@ class BCEDiceLoss(nn.Module):
 
 
 class WeightedCrossEntropyLoss(nn.Module):
-    """WeightedCrossEntropyLoss (WCE) as described in https://arxiv.org/pdf/1707.03237.pdf.
+    """Cross entropy with either configured static class weights or dynamic WCE weights.
 
     Args:
         ignore_index: Index to ignore in the loss computation. Default: -1.
+        weight: Optional static class weights. If omitted, dynamic weights are computed from logits for backward
+            compatibility with the original WCE implementation.
     """
 
-    def __init__(self, ignore_index=-1):
+    def __init__(self, ignore_index=-1, weight=None):
         super().__init__()
         self.ignore_index = ignore_index
+        self.register_buffer("weight", weight)
 
     def forward(self, input, target):
-        weight = self._class_weights(input)
+        weight = self.weight
+        if weight is None:
+            weight = self._class_weights(input)
         return F.cross_entropy(input, target, weight=weight, ignore_index=self.ignore_index)
 
     @staticmethod
@@ -320,7 +325,7 @@ def _create_loss(name, loss_config, weight, ignore_index, pos_weight):
     elif name == "WeightedCrossEntropyLoss":
         if ignore_index is None:
             ignore_index = -100  # use the default 'ignore_index' as defined in the CrossEntropyLoss
-        return WeightedCrossEntropyLoss(ignore_index=ignore_index)
+        return WeightedCrossEntropyLoss(ignore_index=ignore_index, weight=weight)
     elif name == "GeneralizedDiceLoss":
         normalization = loss_config.get("normalization", "sigmoid")
         return GeneralizedDiceLoss(normalization=normalization)
