@@ -16,6 +16,8 @@ SUBMIT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "${SUBMIT_DIR}/pyproject.toml" ] && [ -d "${SUBMIT_DIR}/pytorch3dunet" ]; then
     REPO_ROOT="${SUBMIT_DIR}"
+elif [ -f "${SUBMIT_DIR}/../pyproject.toml" ] && [ -d "${SUBMIT_DIR}/../pytorch3dunet" ]; then
+    REPO_ROOT="$(cd "${SUBMIT_DIR}/.." && pwd)"
 elif [ -f "${SCRIPT_DIR}/../pyproject.toml" ] && [ -d "${SCRIPT_DIR}/../pytorch3dunet" ]; then
     REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 else
@@ -157,5 +159,24 @@ printf 'command:'
 printf ' %q' "${PREDICT_CMD[@]}"
 printf '\n'
 "${PREDICT_CMD[@]}"
+
+if [ "${VISUALIZE_RESULTS:-1}" = "1" ]; then
+    PREDICTION_PATH="${PREDICTION_PATH:-${REPO_ROOT}/outputs/predictions_parihaka/parihaka_test_predictions.h5}"
+    VISUALIZE_CMD=(
+        "${PYTHON_BIN}" scripts/visualize_parihaka_predictions.py
+        --h5 outputs/h5_parihaka/parihaka_test.h5
+        --pred "${PREDICTION_PATH}"
+        --out-dir outputs/visualizations_parihaka
+        --axis "${VISUALIZE_AXIS:-0}"
+        --num-slices "${VISUALIZE_NUM_SLICES:-10}"
+        --raw-channel "${VISUALIZE_RAW_CHANNEL:-0}"
+    )
+    printf 'command:'
+    printf ' %q' "${VISUALIZE_CMD[@]}"
+    printf '\n'
+    "${VISUALIZE_CMD[@]}"
+else
+    echo "Skipping visualization. Set VISUALIZE_RESULTS=1 to enable it."
+fi
 
 echo "finish_date=$(date)"

@@ -16,6 +16,8 @@ SUBMIT_DIR="${SLURM_SUBMIT_DIR:-$(pwd)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "${SUBMIT_DIR}/pyproject.toml" ] && [ -d "${SUBMIT_DIR}/pytorch3dunet" ]; then
     REPO_ROOT="${SUBMIT_DIR}"
+elif [ -f "${SUBMIT_DIR}/../pyproject.toml" ] && [ -d "${SUBMIT_DIR}/../pytorch3dunet" ]; then
+    REPO_ROOT="$(cd "${SUBMIT_DIR}/.." && pwd)"
 elif [ -f "${SCRIPT_DIR}/../pyproject.toml" ] && [ -d "${SCRIPT_DIR}/../pytorch3dunet" ]; then
     REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 else

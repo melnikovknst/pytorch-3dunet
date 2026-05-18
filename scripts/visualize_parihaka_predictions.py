@@ -385,6 +385,11 @@ def main() -> None:
     summary_path.write_text(json.dumps(summary, indent=2, default=_json_default), encoding="utf-8")
     print(f"wrote visualizations to {out_dir}")
     print(f"wrote {summary_path}")
+    print(f"voxel_accuracy={voxel_accuracy:.6f}")
+    print(f"mean_iou={mean_iou:.6f}" if mean_iou is not None else "mean_iou=null")
+    print("per_class_iou:")
+    for class_id, iou in per_class_iou.items():
+        print(f"  class_{class_id}={iou:.6f}" if iou is not None else f"  class_{class_id}=null")
 
 
 if __name__ == "__main__":
