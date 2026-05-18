@@ -106,7 +106,7 @@ if [ "${VISUALIZE_RESULTS:-1}" = "1" ]; then
         --h5 outputs/h5_parihaka/parihaka_test.h5
         --pred "${PREDICTION_PATH}"
         --out-dir outputs/visualizations_parihaka
-        --axis "${VISUALIZE_AXIS:-0}"
+        --axis "${VISUALIZE_AXIS:-1}"
         --num-slices "${VISUALIZE_NUM_SLICES:-10}"
         --raw-channel "${VISUALIZE_RAW_CHANNEL:-0}"
     )

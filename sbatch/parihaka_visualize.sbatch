@@ -75,7 +75,7 @@ CMD=(
     --h5 "${H5_PATH}"
     --pred "${PREDICTION_PATH}"
     --out-dir "${VISUALIZATION_DIR}"
-    --axis "${VISUALIZE_AXIS:-0}"
+    --axis "${VISUALIZE_AXIS:-1}"
     --num-slices "${VISUALIZE_NUM_SLICES:-10}"
     --raw-channel "${VISUALIZE_RAW_CHANNEL:-0}"
 )

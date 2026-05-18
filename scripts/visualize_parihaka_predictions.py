@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="Directory for PNGs and summary JSON")
     parser.add_argument("--num-slices", type=int, default=10, help="Number of evenly spaced slices to render")
     parser.add_argument("--indices", nargs="+", type=int, default=None, help="Explicit slice indices to render")
-    parser.add_argument("--axis", type=int, default=0, help="Slice axis")
+    parser.add_argument("--axis", type=int, default=1, help="Slice axis")
     parser.add_argument("--raw-channel", type=int, default=0, help="Raw channel to visualize when raw is [C,D,H,W]")
     return parser.parse_args()
 
